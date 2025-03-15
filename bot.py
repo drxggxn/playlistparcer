@@ -9,6 +9,7 @@ from PIL import Image
 import os
 import logging
 from bs4 import BeautifulSoup
+from io import BytesIO
 
 # Токен от BotFather
 TOKEN = '7544295352:AAEdrCNQR3JiRjz6SpxPOQYfj_9EPSAXHaQ'
@@ -43,30 +44,25 @@ def setup_driver():
     chrome_options = Options()
     chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
-    # Устанавливаем большой размер окна (опционально)
     chrome_options.add_argument('--window-size=1920,1080')
     driver = webdriver.Chrome(options=chrome_options)
     return driver
 
 # Функция для скриншота всей страницы
 def full_page_screenshot(driver, file_path):
-    # Получаем высоту всей страницы
     total_height = driver.execute_script("return document.body.scrollHeight")
     viewport_height = driver.execute_script("return window.innerHeight")
-    width = 1920  # Ширина окна (можно настроить)
+    width = 1920
 
-    # Устанавливаем размер окна для первого скриншота
     driver.set_window_size(width, viewport_height)
 
-    # Скроллим и делаем скриншоты
     screenshots = []
     for i in range(0, total_height, viewport_height):
         driver.execute_script(f"window.scrollTo(0, {i});")
-        time.sleep(0.5)  # Ждём прогрузки
+        time.sleep(0.5)
         screenshot = driver.get_screenshot_as_png()
         screenshots.append(Image.open(BytesIO(screenshot)))
 
-    # Склеиваем изображения
     full_image = Image.new('RGB', (width, total_height))
     offset = 0
     for img in screenshots:
@@ -90,9 +86,8 @@ def scan_bandlink(artist_name):
         logger.info(f"Введён ник: {artist_name}")
         search_box.send_keys(Keys.RETURN)
         logger.info("Нажата клавиша Enter")
-        time.sleep(3)  # Ждём загрузки страницы
+        time.sleep(3)
         
-        # Делаем скриншот всей страницы
         screenshot_path = f"{artist_name}_screenshot.png"
         full_page_screenshot(driver, screenshot_path)
         
@@ -124,10 +119,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Инструкция:\n"
         "1. Нажми 'Начать поиск' и введи ник артиста.\n"
         "2. Или настрой привязку ника в 'Настройки'.\n"
-        "3. Для массового поиска введи /search и список артистов (каждый с новой строки).\n"
-        "Пример:\n"
-        "Metallica\n"
-        "Nirvana"
+        "3. Используй /search <ник> для поиска (например, /search Metallica)."
     )
     
     await update.message.reply_text(welcome_text, reply_markup=reply_markup)
@@ -158,7 +150,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await context.bot.send_message(chat_id=user_id, text=f"Ошибка при поиске {artist_name}.")
                 logger.error(f"Не удалось выполнить поиск для {artist_name}")
         else:
-            await query.edit_message_text("Введи ник артиста для поиска (например: /search Metallica)\nИли список артистов по строкам:\nMetallica\nNirvana")
+            await query.edit_message_text("Введи ник артиста для поиска (например: /search Metallica)")
             logger.info(f"Запрошен ник у пользователя {user_id}")
     
     elif query.data == 'settings':
@@ -166,46 +158,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text(f"Текущий ник: {current}\nВведи новый ник через /settings <ник>")
         logger.info(f"Показаны настройки пользователю {user_id}")
 
-# Команда /search для массового поиска
+# Команда /search для одного артиста
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.message.from_user.id
     logger.info(f"Пользователь {user_id} вызвал /search с аргументами: {context.args}")
     
-    # Получаем весь текст сообщения, разбиваем на строки
-    message_text = update.message.text
-    artists = message_text.split('\n')[1:]  # Пропускаем первую строку (/search)
-    
-    if not artists and user_id in user_settings:
-        artists = [user_settings[user_id]]  # Если аргументов нет, берём привязанный ник
-        await update.message.reply_text(f"Ищу по привязанному нику: {artists[0]}")
-        logger.info(f"Использую привязанный ник: {artists[0]}")
-    elif not artists:
-        await update.message.reply_text("Введи ник артиста после /search или список артистов по строкам:\nMetallica\nNirvana")
+    if user_id in user_settings and not context.args:
+        artist_name = user_settings[user_id]
+        await update.message.reply_text(f"Ищу по привязанному нику: {artist_name}")
+        logger.info(f"Использую привязанный ник: {artist_name}")
+    elif context.args:
+        artist_name = " ".join(context.args)  # Объединяем аргументы в одно имя
+        await update.message.reply_text(f"Ищу артиста: {artist_name}")
+        logger.info(f"Поиск по введённому нику: {artist_name}")
+    else:
+        await update.message.reply_text("Введи ник артиста после /search (например: /search Metallica)")
         logger.warning(f"Пользователь {user_id} не указал ник")
         return
+    
+    screenshot_path = scan_bandlink(artist_name)
+    if screenshot_path:
+        with open(screenshot_path, 'rb') as photo:
+            await update.message.reply_photo(photo=photo)
+            logger.info(f"Скриншот отправлен пользователю {user_id} для {artist_name}")
+        log = f"Поиск выполнен: {artist_name} | Время: {time.ctime()}"
+        logger.info(log)
+        os.remove(screenshot_path)
+        logger.info(f"Временный файл {screenshot_path} удалён")
+        update_request_count()
     else:
-        await update.message.reply_text(f"Начинаю поиск для {len(artists)} артистов...")
-        logger.info(f"Начинаю поиск для {len(artists)} артистов: {artists}")
-
-    # Обрабатываем каждого артиста
-    for artist_name in artists:
-        artist_name = artist_name.strip()  # Убираем лишние пробелы
-        if not artist_name:  # Пропускаем пустые строки
-            continue
-        
-        screenshot_path = scan_bandlink(artist_name)
-        if screenshot_path:
-            with open(screenshot_path, 'rb') as photo:
-                await context.bot.send_photo(chat_id=user_id, photo=photo)
-                logger.info(f"Скриншот отправлен пользователю {user_id} для {artist_name}")
-            log = f"Поиск выполнен: {artist_name} | Время: {time.ctime()}"
-            logger.info(log)
-            os.remove(screenshot_path)
-            logger.info(f"Временный файл {screenshot_path} удалён")
-            update_request_count()
-        else:
-            await context.bot.send_message(chat_id=user_id, text=f"Ошибка при поиске {artist_name}.")
-            logger.error(f"Не удалось выполнить поиск для {artist_name}")
+        await update.message.reply_text(f"Ошибка при поиске {artist_name}. Попробуй позже.")
+        logger.error(f"Не удалось выполнить поиск для {artist_name}")
 
 # Команда /settings
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -238,5 +221,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
-from io import BytesIO  # Добавляем импорт для работы с байтами
