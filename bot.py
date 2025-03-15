@@ -1,6 +1,6 @@
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, JobQueue
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
@@ -13,6 +13,9 @@ from io import BytesIO
 
 # Токен от BotFather
 TOKEN = '7544295352:AAEdrCNQR3JiRjz6SpxPOQYfj_9EPSAXHaQ'
+
+# ID твоего чата для отправки статуса
+YOUR_CHAT_ID = '850489887'  # Замени на свой chat_id
 
 # Словарь для хранения привязанных никнеймов (user_id: artist_nickname)
 user_settings = {}
@@ -75,7 +78,7 @@ def full_page_screenshot(driver, file_path):
 # Функция для парсинга и скриншота одного артиста
 def scan_bandlink(artist_name):
     logger.info(f"Начинаю поиск для артиста: {artist_name}")
-    url = f"https://band.link/scanner"
+    url = "https://band.link/scanner"
     driver = setup_driver()
     
     try:
@@ -100,6 +103,14 @@ def scan_bandlink(artist_name):
     finally:
         driver.quit()
         logger.info("Браузер закрыт")
+
+# Функция отправки статуса каждые 10 минут
+async def send_status(context: ContextTypes.DEFAULT_TYPE) -> None:
+    try:
+        await context.bot.send_message(chat_id=YOUR_CHAT_ID, text=":status OK")
+        logger.info("Статус отправлен: :status OK")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке статуса: {str(e)}")
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -210,13 +221,18 @@ def main() -> None:
     logger.info("Бот запускается...")
     application = Application.builder().token(TOKEN).build()
     
+    # Добавляем обработчики команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("search", search))
     application.add_handler(CommandHandler("settings", settings))
     application.add_handler(CallbackQueryHandler(button_handler))
     
-    logger.info("Бот запущен, начинаю polling")
-    application.run_polling()
+    # Настраиваем JobQueue для отправки статуса каждые 10 минут
+    job_queue = application.job_queue
+    job_queue.run_repeating(send_status, interval=600, first=0)  # 600 секунд = 10 минут
+    
+    logger.info("Бот запущен, начинаю polling с увеличенным интервалом")
+    application.run_polling(drop_pending_updates=True, timeout=60)  # Увеличиваем timeout
     logger.info("Бот остановлен")
 
 if __name__ == '__main__':
