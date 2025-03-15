@@ -43,8 +43,38 @@ def setup_driver():
     chrome_options = Options()
     chrome_options.add_argument('--headless')
     chrome_options.add_argument('--no-sandbox')
+    # Устанавливаем большой размер окна (опционально)
+    chrome_options.add_argument('--window-size=1920,1080')
     driver = webdriver.Chrome(options=chrome_options)
     return driver
+
+# Функция для скриншота всей страницы
+def full_page_screenshot(driver, file_path):
+    # Получаем высоту всей страницы
+    total_height = driver.execute_script("return document.body.scrollHeight")
+    viewport_height = driver.execute_script("return window.innerHeight")
+    width = 1920  # Ширина окна (можно настроить)
+
+    # Устанавливаем размер окна для первого скриншота
+    driver.set_window_size(width, viewport_height)
+
+    # Скроллим и делаем скриншоты
+    screenshots = []
+    for i in range(0, total_height, viewport_height):
+        driver.execute_script(f"window.scrollTo(0, {i});")
+        time.sleep(0.5)  # Ждём прогрузки
+        screenshot = driver.get_screenshot_as_png()
+        screenshots.append(Image.open(BytesIO(screenshot)))
+
+    # Склеиваем изображения
+    full_image = Image.new('RGB', (width, total_height))
+    offset = 0
+    for img in screenshots:
+        full_image.paste(img, (0, offset))
+        offset += img.size[1]
+
+    full_image.save(file_path)
+    logger.info(f"Полный скриншот сохранён: {file_path}")
 
 # Функция для парсинга и скриншота одного артиста
 def scan_bandlink(artist_name):
@@ -60,12 +90,11 @@ def scan_bandlink(artist_name):
         logger.info(f"Введён ник: {artist_name}")
         search_box.send_keys(Keys.RETURN)
         logger.info("Нажата клавиша Enter")
-        time.sleep(3)
+        time.sleep(3)  # Ждём загрузки страницы
         
-        # Делаем скриншот
+        # Делаем скриншот всей страницы
         screenshot_path = f"{artist_name}_screenshot.png"
-        driver.save_screenshot(screenshot_path)
-        logger.info(f"Скриншот сохранён: {screenshot_path}")
+        full_page_screenshot(driver, screenshot_path)
         
         return screenshot_path
     
@@ -209,3 +238,5 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
+from io import BytesIO  # Добавляем импорт для работы с байтами
